@@ -29,15 +29,18 @@
         chart = chartController.getChart();
         innerRadius = parseFloat(options.innerRadius);
         labelRadius = parseFloat(options.labelRadius);
-        center = chartController.getChart().append("g").attr("class", "arc");
-        arcPath = center.append("path");
-        arcLabel = center.append("text").attr("class", "arc-label").attr("dy", "0.35em").style("text-anchor", "middle");
+        center = null;
+        arcPath = null;
+        arcLabel = null;
         redraw = function(data) {
           var arc, arcTween, labelArc, radius;
+          center || (center = chartController.getChart().append("g").attr("class", "arc"));
+          arcPath || (arcPath = center.append("path"));
+          arcLabel || (arcLabel = center.append("text").attr("class", "arc-label").attr("dy", "0.35em").style("text-anchor", "middle"));
           if (!((data != null) && data.length !== 0)) {
             return;
           }
-          radius = Math.min(chartController.innerWidth(), chartController.innerHeight()) / 2;
+          radius = Math.min(chartController.innerWidth, chartController.innerHeight) / 2;
           center.attr("transform", "translate(" + radius + "," + radius + ")");
           arc = d3.svg.arc().outerRadius(radius).innerRadius(radius * innerRadius).startAngle(0).endAngle(function(d) {
             return d / 100 * 2 * Math.PI;
@@ -57,9 +60,7 @@
           arcPath.datum(data[options.value]).transition().ease(options.transition).duration(options.transitionDuration).attrTween("d", arcTween);
           return arcLabel.text(data[options.label]);
         };
-        return chartController.registerElement({
-          redraw: redraw
-        });
+        return chartController.registerElement(redraw, options.order);
       }
     };
   });
@@ -77,15 +78,15 @@
       restrict: 'E',
       require: '^d3Chart',
       link: function(scope, el, attrs, chartController) {
-        var area, areaStacked, options, redraw, x, y;
+        var area, areaElement, areaStacked, options, redraw, x, y;
         options = angular.extend(defaults(), attrs);
         x = chartController.getScale(options.xscale || options.x);
         y = chartController.getScale(options.yscale || options.y);
         if (options.vertical) {
           area = d3.svg.area().y(function(d) {
-            return x(d[options.x]);
+            return x(d.x);
           }).x0(0).x1(function(d) {
-            return y(d[options.y]);
+            return y(d.y);
           });
           areaStacked = d3.svg.area().y(function(d) {
             return x(d.x);
@@ -96,9 +97,9 @@
           });
         } else {
           area = d3.svg.area().x(function(d) {
-            return x(d[options.x]);
+            return x(d.x);
           }).y0(chartController.innerHeight).y1(function(d) {
-            return y(d[options.y]);
+            return y(d.y);
           });
           areaStacked = d3.svg.area().x(function(d) {
             return x(d.x);
@@ -108,8 +109,10 @@
             return y(d.y + d.y0);
           });
         }
+        areaElement = null;
         redraw = function(data) {
           var charts, columns, mappedData, name, stack, stackedData, value;
+          areaElement || (areaElement = chartController.getChart().append("g").attr("class", "area"));
           if (!((data != null) && data.length !== 0)) {
             return;
           }
@@ -160,23 +163,29 @@
             stack.offset(options.offset);
           }
           stackedData = stack(mappedData);
-          charts = chartController.getChart().selectAll('path.area').data(stackedData);
+          charts = areaElement.selectAll('path.area').data(stackedData);
           charts.enter().append("path");
           charts.attr("class", function(d) {
             return "area " + d.name;
-          }).transition().duration(500).attr("d", function(d) {
-            return areaStacked(d.values);
+          }).transition().duration(500).attr("d", function(d, i) {
+            if (i === 0) {
+              return area(d.values);
+            } else {
+              return areaStacked(d.values);
+            }
           });
-          return charts.exit().attr("d", function(d) {
-            return areaStacked(d.values);
+          return charts.exit().attr("d", function(d, i) {
+            if (i === 0) {
+              return area(d.values);
+            } else {
+              return areaStacked(d.values);
+            }
           }).remove();
         };
         if (options.columns != null) {
           scope.$watch(options.columns, chartController.redraw, true);
         }
-        return chartController.registerElement({
-          redraw: redraw
-        });
+        return chartController.registerElement(redraw, options.order);
       }
     };
   });
@@ -199,43 +208,57 @@
       restrict: 'E',
       require: '^d3Chart',
       link: function($scope, $el, $attrs, chartController) {
-        var axisElement, drawGrid, getAxis, grid, label, options, positionLabel, range, redraw, scale, translation;
+        var adjustTickLabels, axisElement, drawGrid, getAxis, grid, label, options, positionLabel, range, redraw, scale, translation, updateScale;
         options = angular.extend(defaults(), $attrs);
         range = function() {
           if (options.orientation === 'top' || options.orientation === 'bottom') {
             if (options.reverse != null) {
-              return [chartController.innerWidth(), 0];
+              return [chartController.innerWidth, 0];
             } else {
-              return [0, chartController.innerWidth()];
+              return [0, chartController.innerWidth];
             }
           } else {
             if (options.reverse != null) {
-              return [0, chartController.innerHeight()];
+              return [0, chartController.innerHeight];
             } else {
-              return [chartController.innerHeight(), 0];
+              return [chartController.innerHeight, 0];
             }
           }
         };
         translation = function() {
           if (options.orientation === 'bottom') {
-            return "translate(0, " + (chartController.innerHeight()) + ")";
+            return "translate(0, " + chartController.innerHeight + ")";
           } else if (options.orientation === 'top') {
             return "translate(0, 0)";
           } else if (options.orientation === 'left') {
             return "translate(0, 0)";
           } else if (options.orientation === 'right') {
-            return "translate(" + (chartController.innerWidth()) + ", 0)";
+            return "translate(" + chartController.innerWidth + ", 0)";
           }
         };
-        scale = d3.scale.linear();
+        if (options.scale === 'time') {
+          scale = d3.time.scale();
+        } else if (options.scale) {
+          scale = d3.scale[options.scale]();
+        } else {
+          scale = d3.scale.linear();
+        }
         getAxis = function() {
-          var axis, format;
+          var axis, format, tickSize;
           axis = d3.svg.axis().scale(scale).orient(options.orientation);
           if (options.ticks) {
             axis.ticks(options.ticks);
           }
+          if (options.timeScale) {
+            axis.ticks(d3.time[options.timeScale], options.timeInterval);
+          }
           if (options.tickValues) {
             axis.tickValues($scope.$eval(options.tickValues));
+          }
+          if (options.tickSize) {
+            tickSize = options.tickSize.split(',');
+            axis.innerTickSize(tickSize[0]);
+            axis.outerTickSize(tickSize[1]);
           }
           if (options.format != null) {
             format = d3.format(options.format);
@@ -251,41 +274,92 @@
         };
         positionLabel = function(label) {
           if (options.orientation === 'bottom') {
-            return label.attr("x", "" + (chartController.innerWidth() / 2)).attr("dy", "" + chartController.margin.bottom).attr("style", "text-anchor: middle;");
+            return label.attr("x", "" + (chartController.innerWidth / 2)).attr("dy", "" + chartController.margin.bottom).attr("style", "text-anchor: middle;");
           } else if (options.orientation === 'top') {
-            return label.attr("x", "" + (chartController.innerWidth() / 2)).attr("dy", "" + (-chartController.margin.top)).attr("style", "text-anchor: middle;");
+            return label.attr("x", "" + (chartController.innerWidth / 2)).attr("dy", "" + (-chartController.margin.top)).attr("style", "text-anchor: middle;");
           } else if (options.orientation === 'left') {
-            return label.attr("x", "-" + (chartController.innerHeight() / 2)).attr("y", "" + (-chartController.margin.left + 18)).attr("style", "text-anchor: middle;").attr("transform", "rotate(-90)");
+            return label.attr("x", "-" + (chartController.innerHeight / 2)).attr("dy", "" + (-chartController.margin.left + 18)).attr("style", "text-anchor: middle;").attr("transform", "rotate(-90)");
           } else if (options.orientation === 'right') {
-            return label.attr("x", "" + (chartController.innerHeight() / 2)).attr("dy", "" + (-chartController.margin.right + 18)).attr("style", "text-anchor: middle;").attr("transform", "rotate(90)");
+            return label.attr("x", "" + (chartController.innerHeight / 2)).attr("dy", "" + (-chartController.margin.right + 18)).attr("style", "text-anchor: middle;").attr("transform", "rotate(90)");
           }
         };
         drawGrid = function(grid) {
           if (options.orientation === 'bottom') {
-            return grid.call(getAxis().tickSize(chartController.innerHeight(), 0, 0).tickFormat(''));
+            return grid.call(getAxis().tickSize(chartController.innerHeight, 0, 0).tickFormat(''));
           } else if (options.orientation === 'top') {
-            return grid.attr("transform", "translate(0, " + (chartController.innerHeight()) + ")").call(getAxis().tickSize(chartController.innerHeight(), 0, 0).tickFormat(''));
+            return grid.attr("transform", "translate(0, " + chartController.innerHeight + ")").call(getAxis().tickSize(chartController.innerHeight, 0, 0).tickFormat(''));
           } else if (options.orientation === 'left') {
-            return grid.attr("transform", "translate(" + (chartController.innerWidth()) + ", 0)").call(getAxis().tickSize(chartController.innerWidth(), 0, 0).tickFormat(''));
+            return grid.attr("transform", "translate(" + chartController.innerWidth + ", 0)").call(getAxis().tickSize(chartController.innerWidth, 0, 0).tickFormat(''));
           } else if (options.orientation === 'right') {
-            return grid.call(getAxis().tickSize(chartController.innerWidth(), 0, 0).tickFormat(''));
+            return grid.call(getAxis().tickSize(chartController.innerWidth, 0, 0).tickFormat(''));
           }
         };
-        axisElement = chartController.getChart().append("g").attr("class", "axis axis-" + options.orientation + " axis-" + options.name).attr("transform", translation());
-        if (options.label) {
-          label = axisElement.append("text").attr("class", "axis-label").text(options.label);
-        }
-        if (options.grid) {
-          grid = chartController.getChart().append("g").attr("class", "axis-grid axis-grid-" + options.name);
-        }
+        adjustTickLabels = function(g) {
+          var firstTickLabels, lastTickLabels, tickLabels;
+          tickLabels = g.selectAll('.tick text');
+          if (options.tickDy) {
+            tickLabels.attr('dy', options.tickDy);
+          }
+          if (options.tickDx) {
+            tickLabels.attr('dx', options.tickDx);
+          }
+          if (options.tickAnchor) {
+            tickLabels.style('text-anchor', options.tickAnchor);
+          }
+          lastTickLabels = d3.select(tickLabels[0].slice(-1)[0]);
+          if (options.lastTickDy) {
+            lastTickLabels.attr('dy', options.lastTickDy);
+          }
+          if (options.lastTickDx) {
+            lastTickLabels.attr('dx', options.lastTickDx);
+          }
+          if (options.lastTickAnchor) {
+            lastTickLabels.style('text-anchor', options.lastTickAnchor);
+          }
+          firstTickLabels = d3.select(tickLabels[0][0]);
+          if (options.firstTickDy) {
+            firstTickLabels.attr('dy', options.firstTickDy);
+          }
+          if (options.firstTickDx) {
+            firstTickLabels.attr('dx', options.firstTickDx);
+          }
+          if (options.listTickAnchor) {
+            return firstTickLabels.style('text-anchor', options.firstTickAnchor);
+          }
+        };
+        axisElement = null;
+        grid = null;
+        label = null;
         redraw = function(data) {
+          var tickLabels;
+          axisElement || (axisElement = chartController.getChart().append("g").attr("class", "axis axis-" + options.orientation + " axis-" + options.name).attr("transform", translation()));
+          if (options.label) {
+            label || (label = axisElement.append("text").attr("class", "axis-label").text(options.label));
+          }
+          if (options.grid) {
+            grid || (grid = chartController.getChart().append("g").attr("class", "axis-grid axis-grid-" + options.name));
+          }
+          if (!((data != null) && data.length !== 0)) {
+            return;
+          }
+          if (label) {
+            positionLabel(label.transition().duration(500));
+          }
+          axisElement.transition().duration(500).attr("transform", translation()).call(getAxis()).selectAll('tick text').tween("attr.dx", null).tween("attr.dy", null).tween("style.text-anchor", null);
+          if (grid != null) {
+            drawGrid(grid.transition().duration(500));
+          }
+          tickLabels = axisElement.selectAll('.tick text');
+          return axisElement.call(adjustTickLabels);
+        };
+        updateScale = function(data) {
           var datum, domainValues;
           if (!((data != null) && data.length !== 0)) {
             return;
           }
           scale.range(range());
-          if (label) {
-            positionLabel(label.transition().duration(500));
+          if (options.domain) {
+            data;
           }
           if (options.filter) {
             domainValues = $scope.$eval("" + options.filter + "(data)", {
@@ -303,21 +377,13 @@
             })();
           }
           if (options.extent) {
-            scale.domain(d3.extent(domainValues));
-          } else if (options.domain) {
-            scale.domain([0, d3.max(domainValues)]);
+            return scale.domain(d3.extent(domainValues));
           } else {
-            scale.domain([0, d3.max(domainValues)]);
-          }
-          axisElement.transition().duration(500).attr("transform", translation()).call(getAxis());
-          if (grid != null) {
-            return drawGrid(grid.transition().duration(500));
+            return scale.domain([0, d3.max(domainValues)]);
           }
         };
-        chartController.addScale(options.name, {
-          scale: scale,
-          redraw: redraw
-        });
+        chartController.addScale(options.name, scale, updateScale);
+        chartController.registerElement(redraw, options.order);
         if (options.tickValues != null) {
           return $scope.$watch(options.tickValues, chartController.redraw, true);
         }
@@ -342,19 +408,21 @@
       restrict: 'E',
       require: '^d3Chart',
       link: function(scope, el, attrs, chartController) {
-        var chart, height, options, redraw, width, x, y;
+        var barsElements, chart, height, options, redraw, width, x, y;
         options = angular.extend(defaults(), attrs);
         x = chartController.getScale(options.xscale || options.x);
         y = chartController.getScale(options.yscale || options.y);
         chart = chartController.getChart();
-        height = chartController.innerHeight();
+        height = chartController.innerHeight;
         width = options.width;
+        barsElements = null;
         redraw = function(data) {
           var bars;
+          barsElements || (barsElements = chartController.getChart().append("g").attr("class", "bars"));
           if (!((data != null) && data.length !== 0)) {
             return;
           }
-          bars = chart.selectAll("rect.bar").data(data);
+          bars = barsElements.selectAll("rect.bar").data(data);
           bars.exit().transition().duration(500).attr("y", function(d) {
             return height;
           }).attr("height", 0).remove();
@@ -375,9 +443,7 @@
             return height - y(d[options.y]);
           });
         };
-        return chartController.registerElement({
-          redraw: redraw
-        });
+        return chartController.registerElement(redraw, options.order);
       }
     };
   });
@@ -392,7 +458,7 @@
       scope: true,
       controller: [
         '$scope', '$element', '$attrs', '$window', '$timeout', function($scope, $el, $attrs, $window, $timeout) {
-          var binding, chart, debounce, elements, scales, svg,
+          var binding, chart, debounce, elements, height, scales, sortOrder, svg, updateSize, width,
             _this = this;
           scales = $scope.scales = {};
           elements = $scope.elements = [];
@@ -404,17 +470,11 @@
             left: 10
           };
           svg = d3.select($el[0]).append('svg').attr('class', "d3").attr("width", "100%").attr("height", "100%");
-          this.width = function() {
+          width = function() {
             return $el[0].offsetWidth;
           };
-          this.height = function() {
+          height = function() {
             return $el[0].offsetHeight;
-          };
-          this.innerWidth = function() {
-            return _this.width() - _this.margin.left - _this.margin.right;
-          };
-          this.innerHeight = function() {
-            return _this.height() - _this.margin.top - _this.margin.bottom;
           };
           chart = svg.append("g").attr("transform", "translate(" + this.margin.left + "," + this.margin.top + ")");
           this.getSvg = function() {
@@ -423,43 +483,66 @@
           this.getChart = function() {
             return chart;
           };
-          this.addScale = function(name, scale) {
-            return scales[name] = scale;
+          this.addScale = function(name, scale, update) {
+            return scales[name] = {
+              scale: scale,
+              update: update
+            };
           };
           this.getScale = function(name) {
             return scales[name].scale;
           };
-          this.registerElement = function(el) {
-            return elements.push(el);
+          this.registerElement = function(el, order) {
+            if (order == null) {
+              order = 0;
+            }
+            return elements.push({
+              redraw: el,
+              order: Number(order)
+            });
+          };
+          updateSize = function() {
+            if (_this.width !== width() || _this.height !== height()) {
+              _this.width = width();
+              _this.height = height();
+              _this.innerWidth = _this.width - _this.margin.left - _this.margin.right;
+              _this.innerHeight = _this.height - _this.margin.top - _this.margin.bottom;
+              return _this.redraw();
+            }
+          };
+          sortOrder = function(a, b) {
+            return a.order - b.order;
           };
           debounce = null;
           this.redraw = function() {
-            var _this = this;
-            if (debounce) {
+            if (debounce || _this.width === 0 || _this.height === 0) {
               return;
             }
             return debounce = $timeout(function() {
-              var data, element, name, scale, _i, _len, _results;
+              var data, element, name, scale, _i, _len, _ref, _results;
               debounce = null;
               data = $scope.$eval(binding);
               for (name in scales) {
                 scale = scales[name];
-                scale.redraw(data);
+                scale.update(data);
               }
+              _ref = elements.sort(sortOrder);
               _results = [];
-              for (_i = 0, _len = elements.length; _i < _len; _i++) {
-                element = elements[_i];
+              for (_i = 0, _len = _ref.length; _i < _len; _i++) {
+                element = _ref[_i];
                 _results.push(element.redraw(data));
               }
               return _results;
             }, $attrs.updateInterval || 200);
           };
-          $window.addEventListener('resize', this.redraw);
+          $window.addEventListener('resize', updateSize);
           if ($attrs.watch === 'deep') {
             $scope.$watch(binding, this.redraw, true);
           } else {
             $scope.$watch(binding, this.redraw);
           }
+          $scope.$watch(updateSize);
+          updateSize();
         }
       ]
     };
@@ -581,22 +664,21 @@
         options = angular.extend(defaults(), attrs);
         x = chartController.getScale(options.xscale || options.x);
         y = chartController.getScale(options.yscale || options.y);
-        height = chartController.innerHeight();
+        height = chartController.innerHeight;
         line = d3.svg.line().x(function(d) {
           return x(d[options.x]);
         }).y(function(d) {
           return y(d[options.y]);
         });
-        linePath = chartController.getChart().append("path").attr("class", "line line-" + (options.name || options.y)).style("fill", "none").style("stroke", options.stroke);
+        linePath = null;
         redraw = function(data) {
+          linePath || (linePath = chartController.getChart().append("path").attr("class", "line line-" + (options.name || options.y)).style("fill", "none").style("stroke", options.stroke));
           if (!((data != null) && data.length !== 0)) {
             return;
           }
           return linePath.datum(data).transition().duration(500).attr("d", line);
         };
-        return chartController.registerElement({
-          redraw: redraw
-        });
+        return chartController.registerElement(redraw, options.order);
       }
     };
   });
@@ -643,14 +725,15 @@
         pie = d3.layout.pie().sort(null).value(function(d) {
           return d[options.value];
         });
-        center = chartController.getChart().append("g").attr("class", "pie");
         _current = null;
+        center = null;
         redraw = function(data) {
           var arc, arcTween, getPosition, label, labelArc, padding, prevbb, radius, slice;
+          center || (center = chartController.getChart().append("g").attr("class", "pie"));
           if (!((data != null) && data.length !== 0)) {
             return;
           }
-          radius = Math.min(chartController.innerWidth(), chartController.innerHeight()) / 2;
+          radius = Math.min(chartController.innerWidth, chartController.innerHeight) / 2;
           center.attr("transform", "translate(" + radius + "," + radius + ")");
           arc = d3.svg.arc().outerRadius(radius).innerRadius(radius * innerRadius);
           arcTween = function(a) {
@@ -728,9 +811,7 @@
             return label.transition().ease(options.transition).duration(options.transitionDuration).attr("transform", getPosition);
           }
         };
-        return chartController.registerElement({
-          redraw: redraw
-        });
+        return chartController.registerElement(redraw, options.order);
       }
     };
   });

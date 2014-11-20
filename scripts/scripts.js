@@ -27,7 +27,7 @@
         value: val,
         label: "" + (val.toFixed(0)) + "%"
       };
-    }, 1000 * 2);
+    }, 1000 * 5);
     $interval(function() {
       var val;
       val = Math.random() * 100;
@@ -35,25 +35,25 @@
         value: val,
         label: "" + (val.toFixed(0)) + "%"
       };
-    }, 1000 * 2.5);
+    }, 1000 * 5);
     $interval(function() {
       if ($scope.columns.length === 3) {
         return $scope.columns = ['savings', 'optimal'];
       } else {
         return $scope.columns = ['savings', 'total', 'optimal'];
       }
-    }, 1000 * 2.5);
-    $scope.stackedSum = function(data) {
-      var value, _i, _len, _results;
-      if (!((data != null) && data.length !== 0)) {
-        return;
-      }
-      _results = [];
-      for (_i = 0, _len = data.length; _i < _len; _i++) {
-        value = data[_i];
-        _results.push(Number(value.savings) + Number(value.total) + Number(value.optimal));
-      }
-      return _results;
+    }, 1000 * 10);
+    $scope.stackDomain = function(data) {
+      var value, values;
+      return values = (function() {
+        var _i, _len, _results;
+        _results = [];
+        for (_i = 0, _len = data.length; _i < _len; _i++) {
+          value = data[_i];
+          _results.push(Number(value.savings) + Number(value.total) + Number(value.optimal));
+        }
+        return _results;
+      })();
     };
     $scope.parseValues = function(row) {
       var k, v;
